@@ -19,15 +19,23 @@ tidy=TRUE, tidy.opts=list(width.cutoff=60), R.options=list(max.print=100))
 
 ## Data Wrangling, Exploration, Visualization
 
-### Name and EID here
+### Junqi Wen, JW53338
 
 #### Introduction 
 
-Paragraph or two introducing your datasets and variables, why they are interesting to you, etc.
+Recently, I stumble across a research regarding the correlation between humidity level and wildfires. Therefore, an idea came across my mind that if there is a correlation between natural disaster and temperature within the boundary. Thus, the datasets I have introduced are: 1. All disaster recorded from 2000- 2021 found on Kaggle, 2: The past historical average temperature by state summarise through weather.gov national database. A third data set is introduce of state abbreviation for late joinin purposes 
 
 ```{R}
 # read your datasets in here, e.g., with read_csv()
+library(tidyverse)
+# https://www.kaggle.com/brsdincer/all-natural-disasters-19002021-eosdis
+data1 <- read_csv("2000-2021_DISASTERS.csv")
 
+# https://www.weather.gov/wrh/climate
+data2 <- read_csv("Temp.csv")
+
+# https://about.usps.com/who-we-are/postal-history/state-abbreviations.htm
+data3 <- read_csv("State_Abbrev.csv")
 ```
 
 #### Tidying: Reshaping
@@ -35,56 +43,239 @@ Paragraph or two introducing your datasets and variables, why they are interesti
 If your datasets are tidy already, demonstrate that you can reshape data with pivot wider/longer here (e.g., untidy and then retidy). Alternatively, it may be easier to wait until the wrangling section so you can reshape your summary statistics. Note here if you are going to do this.
 
 ```{R}
-# your tidying code (if applicable; can also wait until wrangling section)
+# Select only United States data from all disaster file, exclude all 2021 information since it's incomplete
+data1 <- data1 %>%
+  filter(Country == "United States of America (the)") %>%
+  filter(Year < 2021) %>%
+  select(Year, "Disaster_Type", "Location", "Start_Month", "Total_Deaths")
+
+# Weather data excluding 2021's information becuase 2021 information is incomplete and can potentailly cause a lot of errors in calculation 
+data2 <- data2 %>%
+  filter(Year < 2021) 
+
+# Pivot longer the location into individual location by names separating using commas
+data1 <- data1 %>%
+  pivot_longer(Location, names_to = "names", values_to = "values") %>%
+  separate(values, into = c("Loc_1","Loc_2","Loc_3", "Loc_4", "Loc_5"), sep = ",") %>%
+  pivot_longer(c("Loc_1":"Loc_5"),names_to = "Loc", values_to = "Location") %>%
+  select(-c("names","Loc"))
+
+# Pivot_longer the dataset for joining later 
+data2 <- data2 %>%
+  pivot_longer(2:13, names_to="month", values_to="avg_temp")
+
+head(data1)
+```
+* The pivot longer function was used on location given in the disaster dataset to separate each values to its corresponding states instead of a centralized string. The idea behind this fomrat is to assign Loc_1 - Loc-5 for each varaible extracted, then converts each Loc_1 into its own row filled with NA if nothing was found. Finally, all rows with na location will be drop for consistency. Then the data2 is also used pivotlonger to assign average temperature to each month for future merges.
+
+#### Wrangling Part 1 (Mutate)
+
+```{R}
+# Changing NA deaths to 0, removing all rows with NA locations 
+data1 <- data1 %>%
+  mutate(Deaths = ifelse(is.na(Total_Deaths),0, Total_Deaths)) %>%
+  select(-Total_Deaths) %>%
+  na.omit(Lcoation)
+
+data1 <- data1 %>%
+  na.omit(Location)
+
+# using stringr function (Str_replace_all) to replace string month to numeric
+data2 <- data2 %>%
+    mutate(month = str_replace(month, "Jan", "1")) %>%
+    mutate(month = str_replace(month, "Feb", "2")) %>%
+    mutate(month = str_replace(month, "Mar", "3")) %>%
+    mutate(month = str_replace(month, "Apr", "4")) %>%
+    mutate(month = str_replace(month, "May", "5")) %>%
+    mutate(month = str_replace(month, "Jun", "6")) %>%
+    mutate(month = str_replace(month, "Jul", "7")) %>%
+    mutate(month = str_replace(month, "Aug", "8")) %>%
+    mutate(month = str_replace(month, "Sep", "9")) %>%
+    mutate(month = str_replace(month, "Oct", "10")) %>%
+    mutate(month = str_replace(month, "Nov", "11")) %>%
+    mutate(month = str_replace(month, "Dec", "12"))
+
+head(data2)
+
 ```
 
+* This wrnagling function using mutate to replace string character of month with numeric monthly variable for analysis
     
 #### Joining/Merging
 
 ```{R}
-# your joining code
+Temp_data <- left_join(data2, data3, by=c("State"="Abb"))
+Temp_data <- Temp_data %>%
+  rename("Location" = "State.y") %>%
+  mutate(Start_Month = as.numeric(month)) %>%
+  select(-month)
 
-# your joining code
+Final_data <- inner_join(data1, Temp_data, by = c("Year","Location","Start_Month"))
+Final_data <- Final_data %>%
+  mutate(Unique_ID = paste(State,"_",Year,"_",Start_Month))
+head(Final_data)
+
 ```
 
-Discussions of joining here. Feel encouraged to break up into more than once code chunk and discuss each in turn.
+ * The dataset I am joining contains 1759 observation for disaster forecast, 9324 observations for temperature recorded. The Unique ID used to merge the two datasets are given by Month and Location. Therefore, I created a new unique ID for each variable as (State, Year, Month). Many were drop from the us disaster declaration dataset due to irrelevant criteria such as latitude and longtitude, and none were drop from the temperature. Some state abbreviation were drop such as virgin island due to state not recorded as temperature. The resuling dataframe consist a total of 203 observations.
+ 
+ * The joining takes in 2 separate steps. The first left join abbreviation state data to temperature data to allow all abbreviated state have a corresponding full name. The reason to use left join is because the dataset does not contains every single states (Example like Virgin Islands etc). The second part uses an inner join that combines disaster data with Temperature data. Inner join was used for 2 reason: 1 some states does not have disaster recorded therefore is irrelevant to the dataset; 2: Some location recorded are not on a state level but rather province level, therefore omiting the data for this analysis is necessary to compile. Thus inner join was used to create the final dataset.
+ 
+ * Over 1600 observations were drop, and when I did some investigation, it occurred to me that the reason for this is many of the description is inconsitent with the state letter. For Examples, California may be written as "The Valley" since it is not a centralized database. The potential problems is that the final_dataset aren't fully representative of the entire spectrum, but I believe it should be enough for this analysis
 
-####  Wrangling
+####  Wrangling Part 2
+```{R}
+# Creating summary statistic for deaths 
+Final_data %>%
+  select(Deaths) %>%
+   summarize(AvgDeath = mean(Deaths, na.rm = TRUE), 
+            MinDeath = min(Deaths, na.rm = TRUE),
+            MaxDeath = max(Deaths, na.rm = TRUE), 
+            StdDeath = sd(Deaths, na.rm = TRUE),
+            Occurance = n())
+  
+Final_data %>%
+  select(Deaths) %>%
+  summarize(quantile(Deaths,probs = seq(0,1,0.25)))
+```
+* The statistic showed a high variation in death, although the mean centered around 7, the highest death is at 65
 
 ```{R}
-# your wrangling code
+# Creating summary statistic for temperature 
+Final_data %>%
+  select(avg_temp) %>%
+  summarize(AvgTemp = mean(avg_temp, na.rm = TRUE), 
+            MinTemp = min(avg_temp, na.rm = TRUE),
+            maxTemp = max(avg_temp, na.rm = TRUE), 
+            StdTemp = sd(avg_temp, na.rm = TRUE),
+            Occurance = n())
+  
+Final_data %>%
+  select(avg_temp) %>%
+  summarize(quantile(avg_temp,probs = seq(0,1,0.25)))
+```
+*The temperature statistic showed a max temperature of 97.2 with a minimum temperature of 12.5
+```{R}
+# Categorical variables
+Final_data %>%
+  group_by(Year) %>%
+  summarize(count = n())
 
-# your wrangling code
+Final_data %>%
+  group_by(Disaster_Type) %>%
+  summarize(count = n())
 
-# your wrangling code
+Final_data %>%
+  group_by(Start_Month) %>%
+  summarize(count = n())
+
+Final_data %>%
+  group_by(Location) %>%
+  summarize(count = n())
+```
+* The categorical variables showing the table of counts for each level
+
+```{R}
+# Analyzing the data through disaster type and average temperature
+Final_data %>%
+  group_by(Disaster_Type) %>%
+  summarize(AvgTemp = mean(avg_temp, na.rm = TRUE), 
+            MinTemp = min(avg_temp, na.rm = TRUE),
+            maxTemp = max(avg_temp, na.rm = TRUE), 
+            StdTemp = sd(avg_temp, na.rm = TRUE),
+            Occurance = n()) %>%
+  knitr::kable()
+```
+* The depicting graph shows that wildfire have the highest average temperature while Extreme temperature have the highest standard deviation which can be explain by the drastic difference in cold and hot weather. Storm have occurred the most amount of times in the datasets, and drought usually occurs at higher temperature than both flood and storms.
+
+
+```{R}
+# Data analysis by location and deaths 
+Final_data %>% 
+  select(Location, Disaster_Type, Deaths) %>%
+  group_by(Location, Disaster_Type) %>%
+  summarize(death_sum = sum(Deaths)) %>%
+  arrange(desc(death_sum))
 ```
 
-Your discussion of wrangling section here. Feel encouraged to break up into more than once code chunk and discuss each in turn.
+* The Texas storm had the most death in the dataset, and  it appears that the top 10 total deaths are all due to storm disasters
 
+
+```{R}
+# Analyzing the data by dividing temperature
+Final_data %>%
+  mutate(temp_sel = ifelse(avg_temp <40, "Low", ifelse(avg_temp < 70, "Medium", "High"))) %>%
+  group_by(temp_sel) %>%
+  filter(temp_sel == "High") %>%
+  select(Location, Disaster_Type) %>%
+  count(Location, Disaster_Type) %>%
+  arrange(desc(n))
+  
+```
+
+*I decided that it would be a good idea to compare temperatures by sectioning it into low, medium, high section categorize by 40, 70 distinct points. As a result, texas have the highest high temperature with the most frequent disaster type as storm of a total for 10 times in the dataset
+
+```{R}
+F_to_C <- function(temp_F){
+  temp_C <- (temp_F - 32) * 5 / 9
+  return(temp_C)
+}
+
+Final_data %>%
+  summarize(C_temp = F_to_C(avg_temp)) %>%
+  filter(C_temp <= 0) %>%
+  count()
+  
+26/203 
+```
+* There are 26 occurance where the temperature drop below 26 degree which accounts for 12% of the entire datasets
 
 #### Visualizing
 
 ```{R}
-# your plot 1
+Final_data %>%
+  ggplot(aes(x=Start_Month, y = avg_temp, shape = Disaster_Type, colour = Disaster_Type)) +
+  geom_point(aes(color = Disaster_Type)) +
+  scale_x_continuous(breaks = seq(0,12,1)) +
+  scale_y_continuous(breaks = seq(0,100, 25)) +
+  facet_grid(~Disaster_Type) +
+  geom_smooth(method = "loess") + 
+  theme_bw() + ggtitle("Average Temperature over time by Disaster")
 ```
+* AS you can see from the above distribution, its interesting that wildfire only happens after the mid of the month most likely because spring contains a lot of rain. Storm its interesting in which the graph peaks around the middle forming a parabloid and dying down at eaach reear end. Extreme temperature have a few distinct points in which it occurs in Janurary, and during the summer. While drought and flood both. follows a semi-parobloid curve in temperature.
 
-Your discussion of plot 1
 
 ```{R}
-# your plot 2
+Final_data %>%
+  group_by(Disaster_Type) %>%
+  summarise(number = n()) %>%
+  ggplot(aes(x = Disaster_Type, y = number, fill = Disaster_Type)) +
+  geom_histogram(stat = 'identity', position = 'dodge') +
+  coord_flip() +
+  scale_fill_manual(values=c("#FF3333", "#00FFFF", "orange", "#00CC00", "#FFFF33", "#A0A0A0")) + 
+  theme(legend.position='right',axis.text.x = element_text(angle=45, hjust=1),legend.text=element_text(size=8))  + xlab('Year') + ylab('Counts') +
+  ggtitle("Count of Disaster Occurance")
 ```
 
-Your discussion of plot 2
+* It's evident that the analysis shows that storm is the highest occurance for disasters in the past years of trend follow by Flood, then extreme temperature, and around equally the likelihood of Wildfire and Drought
 
 ```{R}
-# your plot 3
+Final_data %>%
+  group_by(Disaster_Type) %>%
+  ggplot(aes(x = Deaths)) +
+  geom_density(aes(fill = Disaster_Type), alpha = .5) + 
+  theme(legend.position='right')  + xlab('Deaths') + ylab('Frequency') +
+  ggtitle("Death Frequency by Disasters") +
+  xlim(0,30)
 ```
 
-Your discussion of plot 3
+*As seen by the graph depicted above, drought usually have the least deaths in the sisutation while extreme temperature results in the most death in frequency chart. Wildfire results in deaths from 2 peak values at around 5 - 15 while flood and storms varies depending on the situations.
 
 #### Concluding Remarks
 
-If any!
+First of all, really enjoyed this project. As seen by the graphs and analysis, it became apparent that there seems to be a correlation between temperature and each individual disaster forecast. It's very likely that temperature was taken into consideration when forecasting potential disaster coming fourth in the U.S. Area.
+
+Some few more thing I feel this remark can improve on is 1. I need to find a better way of joining the data than just simply separating it by commas. Many of the resulting datasets differ from the actual State names by some form of variation which limits the totality of the dataset. Furthermore, the initial datasets contains information from worldwide and not just in the U.S., in the future, it may be a good idea to look at the disaster trend from a macro-global perspective.
 
 
 
